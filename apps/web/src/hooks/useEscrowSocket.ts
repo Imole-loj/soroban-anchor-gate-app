@@ -340,6 +340,13 @@ export class EscrowSocketClient {
     socket.onerror = () => {
       if (this.socket !== socket) return;
       this.emit("error");
+      // Not every runtime follows a connect error with a `close` event: Node 22's
+      // built-in WebSocket emits only `error` for a refused connection, which would
+      // leave the client stalled forever. Detach the dead socket and retry here;
+      // the `onclose` handler above becomes a no-op because `this.socket` is cleared.
+      this.socket = null;
+      socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
+      this.scheduleReconnect();
     };
 
     socket.onclose = () => {
