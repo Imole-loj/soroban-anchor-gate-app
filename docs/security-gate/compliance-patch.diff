@@ -1,0 +1,60 @@
+--- a/scripts/ci/issue_compliance.js
++++ b/scripts/ci/issue_compliance.js
+@@ -217,10 +217,32 @@
+   });
+ 
+   const changedPaths = prFiles.map(f => f.filename);
++  const changedFileStatus = new Map(prFiles.map(f => [f.filename, f.status]));
+   const forbiddenFiles = [];
+   const outOfScopeFiles = [];
++  const declaredDevopsWorkflows = new Set();
++
++  // A DevOps / CI-CD issue may explicitly request a brand-new workflow file
++  // (e.g. "Primary Affected Files: .github/workflows/release.yml"). Such a file
++  // is permitted only when it is newly added in this PR and its path appears
++  // verbatim in the body of a linked, verified issue. Existing workflows
++  // (including pr-security-gate.yml), CODEOWNERS and scripts/ci/ stay
++  // maintainer-only, so the gate can never be hijacked or weakened by a PR.
++  const declaredIssueText = verifiedIssueDetails
++    .map(iss => `${iss.title || ''}\n${iss.body || ''}`)
++    .join('\n');
+ 
+   for (const path of changedPaths) {
++    const isDeclaredNewWorkflow =
++      /^\.github\/workflows\/[\w.-]+\.ya?ml$/.test(path) &&
++      changedFileStatus.get(path) === 'added' &&
++      declaredIssueText.includes(path);
++
++    if (isDeclaredNewWorkflow) {
++      declaredDevopsWorkflows.add(path);
++      continue;
++    }
++
+     // STRICT RULE: Contributors must NEVER modify CI workflows, security gate files, or CODEOWNERS
+     if (path.startsWith('.github/') || path.startsWith('scripts/ci/')) {
+       forbiddenFiles.push(path);
+@@ -262,7 +284,8 @@
+       '\n\n- **Action required:** Revert these files to the base branch using:\n' +
+       '  `git checkout origin/develop -- ' + forbiddenFiles.join(' ') + '`\n' +
+       '  `git commit -m "revert unauthorized workflow/CI changes"`\n' +
+-      '  `git push`');
++      '  `git push`\n\n' +
++      '> 💡 **DevOps / CI-CD issues:** a *new* workflow file is allowed only when the linked issue names its exact path under "Primary Affected Files". Verify the path is spelled identically in the issue body, or ask maintainer @emarkees for a maintainer-authored merge.');
+     return;
+   }
+ 
+@@ -300,9 +323,13 @@
+   }
+ 
+   const layerList = Array.from(allowedLayers).join(', ');
+-  const scopeReport = `Verified **${validIssues.length}** issue(s): ${validIssues.map(n => '#' + n).join(', ')}.\n` +
++  let scopeReport = `Verified **${validIssues.length}** issue(s): ${validIssues.map(n => '#' + n).join(', ')}.\n` +
+     `- **Authorized Architecture Layer(s):** \`${layerList}\`\n` +
+     `- **Total Changed Files:** ${changedPaths.length}`;
++  if (declaredDevopsWorkflows.size > 0) {
++    scopeReport += `\n- **Issue-declared new workflow(s):** ` +
++      Array.from(declaredDevopsWorkflows).map(f => `\`${f}\``).join(', ');
++  }
+ 
+   core.setOutput('is_compliant', 'true');
+   core.setOutput('linked_issue', validIssues.map(n => `#${n}`).join(', '));
